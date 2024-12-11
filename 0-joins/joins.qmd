@@ -1,0 +1,52 @@
+---
+title: "Untitled"
+format: html
+---
+
+
+```{python}
+import pandas as pd
+import polars as pl
+import duckdb
+```
+
+
+
+```{python}
+nocs = pl.read_csv('../data/nocs.csv')
+nocs.head()
+```
+
+
+```{python}
+athletes = pl.read_csv('../data/athletes.csv')
+athletes.head()
+```
+
+# Inner joins
+
+```{python}
+query = """
+SELECT * FROM nocs
+"""
+duckdb.sql(query)
+```
+
+```{python}
+query = """
+SELECT * FROM athletes
+"""
+duckdb.sql(query)
+```
+
+
+```{python}
+query = """
+SELECT l.*, r.name, r.country_code 
+FROM nocs l
+INNER JOIN 
+athletes r
+ON l.code = r.country_code
+"""
+duckdb.sql(query)
+```
