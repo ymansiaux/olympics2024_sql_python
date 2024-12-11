@@ -13,28 +13,30 @@ import duckdb
 
 
 ```{python}
-nocs = pl.read_csv('../data/nocs.csv')
-nocs.head()
+nocs_pd = pd.read_csv('../data/nocs.csv')
+nocs_pl = pl.read_csv('../data/nocs.csv')
+#nocs.head()
 ```
 
 
 ```{python}
-athletes = pl.read_csv('../data/athletes.csv')
-athletes.head()
+athletes_pd = pd.read_csv('../data/athletes.csv')
+athletes_pl = pl.read_csv('../data/athletes.csv')
+#athletes.head()
 ```
 
 # Inner joins
 
 ```{python}
 query = """
-SELECT * FROM nocs
+SELECT * FROM nocs_pl
 """
 duckdb.sql(query)
 ```
 
 ```{python}
 query = """
-SELECT * FROM athletes
+SELECT * FROM athletes_pl
 """
 duckdb.sql(query)
 ```
@@ -43,10 +45,182 @@ duckdb.sql(query)
 ```{python}
 query = """
 SELECT l.*, r.name, r.country_code 
-FROM nocs l
+FROM nocs_pl l
 INNER JOIN 
-athletes r
+athletes_pl r
 ON l.code = r.country_code
 """
+res_sql = duckdb.sql(query).df()
+res_sql.shape
+```
+
+
+```{python}
+res_pandas = pd.merge(nocs_pd, athletes_pd[["country_code", "name"]], left_on="code", right_on = "country_code", how='inner')
+res_pandas.shape
+```
+
+
+```{python}
+res_polars = nocs_pl.join(athletes_pl[["country_code", "name"]], left_on="code", right_on = "country_code", how='inner')
+res_polars.shape
+```
+
+
+```{python}
+res_pandas.columns
+res_polars.columns
+```
+
+# Self joins
+
+On va essayer de reconstruire les podiums
+
+/** medal_date, discipline,event,event_type **/
+
+
+```{python}
+medals_pd = pd.read_csv('../data/medals.csv')
+medals_pl = pl.read_csv('../data/medals.csv')
+```
+
+On agrége 1ere et 2eme place
+
+```{python}
+query = """
+SELECT 
+l.medal_type as medal1,
+r.medal_type as medal2, 
+l.medal_date,
+l.name as athlete1,
+r.name as athlete2,
+l.discipline,
+l.event,
+l.event_type
+FROM medals_pl l INNER JOIN medals_pl r
+USING (medal_date, discipline, event, event_type)
+WHERE l.medal_type = 'Gold Medal' AND r.medal_type = 'Silver Medal'
+ORDER BY l.medal_date, l.name
+"""
+res_sql = duckdb.sql(query).df()
+```
+
+On rajoute les 3eme places
+
+
+```{python}
+query = """
+WITH medals_1_et_2 AS (
+SELECT 
+l.medal_type as medal1,
+r.medal_type as medal2, 
+l.medal_date,
+l.name as athlete1,
+r.name as athlete2,
+l.discipline,
+l.event,
+l.event_type
+FROM medals_pl l INNER JOIN medals_pl r
+USING (medal_date, discipline, event, event_type)
+WHERE l.medal_type = 'Gold Medal' AND r.medal_type = 'Silver Medal'
+ORDER BY l.medal_date, l.name
+)
+
+SELECT 
+l.medal_date,
+l.medal1,
+l.medal2,
+r.medal_type as medal3, 
+l.athlete1,
+l.athlete2,
+r.name as athlete3,
+l.discipline,
+FROM medals_1_et_2 l INNER JOIN medals_pl r
+USING (medal_date, discipline, event, event_type)
+WHERE r.medal_type = 'Bronze Medal'
+ORDER BY l.medal_date, l.athlete1
+"""
+res_sql = duckdb.sql(query).df()
+```
+
+
+# Agregations
+
+On va recalculer les tableaux des médailles
+
+```{python}
+query = """
+SELECT country, gender, COUNT(*) as nb_medals
+FROM medals_pl
+GROUP BY country, gender
+HAVING nb_medals > 10
+ORDER BY nb_medals DESC
+"""
 duckdb.sql(query)
+```
+
+
+Pays qui ont plus de médailles que la moyenne
+
+```{python}
+query = """
+WITH medals_by_country AS (
+SELECT country, COUNT(*) as n_medals
+FROM medals_pl
+GROUP BY country
+),
+
+avg_medals AS (
+SELECT AVG(n_medals) as avg_medals
+FROM medals_by_country
+)
+
+SELECT country, COUNT(*) as nb_medals
+FROM medals_pl
+GROUP BY country
+HAVING nb_medals > (SELECT * FROM avg_medals)
+ORDER BY nb_medals DESC
+"""
+res_sql = duckdb.sql(query)
+```
+
+
+```{python}
+avg_medals = (
+    medals_pd.
+    groupby('country')
+    ["country"].
+    count().
+    mean()
+
+)
+
+df2 = (
+    medals_pd.
+    groupby('country')
+    ["country"].
+    agg(count = 'count')
+    )
+
+df2[df2['count'] > avg_medals]
+```
+
+
+```{python}
+avg_medals = (
+    medals_pl.
+    group_by(['country']).
+    len(name = "nb_medals").
+    mean()
+)
+```
+
+
+```{python}
+(
+medals_pl.
+group_by(['country']).
+len(name = "nb_medals").
+filter(pl.col("nb_medals") > avg_medals["nb_medals"])
+)
 ```
