@@ -224,3 +224,191 @@ len(name = "nb_medals").
 filter(pl.col("nb_medals") > avg_medals["nb_medals"])
 )
 ```
+
+
+# Grouping sets
+
+Calcul des médailles par pays et gender, puis que par pays
+
+```{python}
+query = """
+SELECT country_code, gender, COUNT(*) as nb_medals
+FROM medals_pl
+GROUP BY GROUPING SETS ((country_code, gender), country_code)
+ORDER BY country_code
+"""
+medals_grouping_sets = duckdb.sql(query).df()
+```
+
+# Rollup
+
+```{python}
+query = """
+SELECT country_code, gender, COUNT(*) as nb_medals
+FROM medals_pl
+GROUP BY ROLLUP (country_code, gender)
+ORDER BY country_code
+"""
+medals_rollup = duckdb.sql(query).df()
+```
+
+
+# Cube
+
+```{python}
+query = """
+SELECT country_code, gender, COUNT(*) as nb_medals
+FROM medals_pl
+GROUP BY CUBE (country_code, gender)
+ORDER BY country_code
+"""
+medals_cube = duckdb.sql(query).df()
+```
+
+
+# Windows function
+
+On va calculer les nombres de médailles sur des périodes glissantes
+
+On va d'abord mélanger le dataset
+
+```{python}
+shuffled_medals = medals_pd.sample(frac=1).reset_index(drop=True)
+```
+
+
+```{python}
+query = """
+SELECT COUNT(*) OVER(), *
+FROM shuffled_medals
+"""
+duckdb.sql(query)
+```
+
+
+```{python}
+query = """
+SELECT COUNT(*) OVER(ORDER BY medal_date), *
+FROM shuffled_medals
+"""
+duckdb.sql(query)
+```
+
+# Moyenne mobile du nb de médailles
+
+On va déjà faire un nombre de médailles par jour
+
+```{python}
+query = """
+WITH medals_per_day AS (
+SELECT medal_date, COUNT(*) as nb_medals
+FROM shuffled_medals
+GROUP BY medal_date
+ORDER BY medal_date
+)
+
+SELECT * FROM medals_per_day
+"""
+duckdb.sql(query)
+```
+
+
+```{python}
+query = """
+WITH medals_per_day AS (
+SELECT medal_date, COUNT(*) as nb_medals
+FROM shuffled_medals
+GROUP BY medal_date
+)
+
+SELECT medal_date, AVG(nb_medals) OVER(
+ORDER BY medal_date
+ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS avg_nb_medals_last_4_days
+FROM medals_per_day
+ORDER BY medal_date
+
+"""
+duckdb.sql(query)
+```
+
+# Partitioning
+
+On va calculer les médailles par pays et par discipline
+
+```{python}
+query = """
+WITH medals_per_day AS (
+SELECT medal_date, gender, discipline, COUNT(*) as nb_medals
+FROM shuffled_medals
+GROUP BY medal_date, gender, discipline,
+ORDER BY medal_date
+)
+
+SELECT * FROM medals_per_day
+"""
+duckdb.sql(query)
+```
+
+```{python}
+query = """
+WITH medals_per_day AS (
+SELECT medal_date, country, COUNT(*) as nb_medals
+FROM shuffled_medals
+GROUP BY medal_date, country
+)
+
+SELECT medal_date, country, AVG(nb_medals) OVER(
+PARTITION BY country
+ORDER BY medal_date
+ROWS BETWEEN 3 PRECEDING AND CURRENT ROW
+)  AS avg_nb_medals_last_4_days
+FROM medals_per_day
+ORDER BY medal_date, avg_nb_medals_last_4_days DESC
+"""
+duckdb.sql(query)
+```
+
+
+# Rank 
+
+Classement des pays par jour et par sexe
+
+```{python}
+query = """
+WITH medals_per_day AS (
+SELECT medal_date, country, gender, COUNT(*) as nb_medals
+FROM shuffled_medals
+GROUP BY medal_date, country,gender
+)
+SELECT medal_date, country, gender, nb_medals, DENSE_RANK() OVER( 
+PARTITION BY medal_date, gender
+ORDER BY medal_date, nb_medals DESC ) as classement
+FROM medals_per_day
+ORDER BY medal_date, classement
+"""
+rank = duckdb.sql(query).df()
+```
+
+# Qualify
+
+```{python}
+query = """
+WITH medals_per_day AS (
+SELECT medal_date, country, COUNT(*) as nb_medals
+FROM shuffled_medals
+GROUP BY medal_date, country
+)
+
+SELECT medal_date, country, AVG(nb_medals) OVER(
+PARTITION BY country
+ORDER BY medal_date
+ROWS BETWEEN 3 PRECEDING AND CURRENT ROW
+)  AS avg_nb_medals_last_4_days
+FROM medals_per_day
+QUALIFY avg_nb_medals_last_4_days > 5
+ORDER BY medal_date, avg_nb_medals_last_4_days DESC
+"""
+duckdb.sql(query)
+```
+
+
